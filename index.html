@@ -21,7 +21,7 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef } = React;
 
-        // === 綁定你的 Firebase 設定 ===
+        // === 綁定你的 Firebase 專屬設定 ===
         const firebaseConfig = {
           apiKey: "AIzaSyC4QmmvtkdLhS137PM0P7JI8p5GzPp-bgU",
           authDomain: "drone-scoring-system.firebaseapp.com",
@@ -33,11 +33,11 @@
           measurementId: "G-JEFZPEDTCV"
         };
         
-        // ⚠️ 關鍵修正：初始化 Firebase 並連接到 Realtime Database
+        // 初始化 Firebase (使用 Compat 寫法)
         if (!firebase.apps.length) {
             firebase.initializeApp(firebaseConfig);
         }
-        const db = firebase.database(); // 改用 database() 而不是 firestore()
+        const db = firebase.database(); 
         const auth = firebase.auth();
         // ===========================================
 
@@ -75,7 +75,7 @@
         const Edit3 = (p) => <IconSVG {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></IconSVG>;
 
         // ==========================================
-        // 主程式邏輯 (適用於 Realtime Database)
+        // 主程式邏輯
         // ==========================================
         function App() {
           const [user, setUser] = useState(null);
@@ -92,6 +92,9 @@
           const [isTimerRunning, setIsTimerRunning] = useState(false);
           const [isEditingTime, setIsEditingTime] = useState(false);
           const [timeInput, setTimeInput] = useState("");
+          
+          // ⚠️ 新增：記錄是否剛按下儲存，用來變換按鈕顏色
+          const [isSaved, setIsSaved] = useState(false);
 
           const initialFormState = {
             takeoff: false, obsA: false, obsB: false, obsC: false,
@@ -112,7 +115,7 @@
             return () => unsubscribe();
           }, []);
 
-          // ⚠️ 關鍵修正：Realtime Database 即時資料訂閱
+          // Firebase 即時資料訂閱
           useEffect(() => {
             if (!user) return;
             const scoresRef = db.ref('drone_scores_2026');
@@ -123,7 +126,6 @@
                 data.push({ id: childSnapshot.key, ...childSnapshot.val() });
               });
               
-              // 時間越新的排越前面
               data.sort((a, b) => {
                 const timeA = a.timestamp || 0;
                 const timeB = b.timestamp || 0;
@@ -132,7 +134,7 @@
               setScoresData(data);
             });
 
-            return () => scoresRef.off(); // 離開時取消監聽
+            return () => scoresRef.off();
           }, [user]);
 
           // 計時器邏輯
@@ -327,7 +329,6 @@
             return { title, statusColor, isUp, isDown, comments, playerName: targetPlayer };
           }, [filteredHistory]);
 
-          // ⚠️ 關鍵修正：Realtime Database 儲存的 timestamp 是毫秒
           const formatDate = (timestamp) => {
             if (!timestamp) return '剛剛';
             const d = new Date(timestamp); 
@@ -353,30 +354,35 @@
             setTimeout(() => setNotification(null), 3000);
           };
 
-          // ⚠️ 關鍵修正：寫入 Realtime Database
+          // ⚠️ 關鍵修正：儲存成績並觸發視覺反饋 + 自動刷新
           const handleSave = async () => {
             if (!playerName.trim()) { showNotification('請先輸入參賽學生姓名', 'error'); return; }
             if (form.landing === -1) { showNotification('請選擇降落情況', 'error'); return; }
             if (!user) { showNotification('資料庫連線中，請稍後...', 'error'); return; }
 
             try {
+              // 1. 寫入 Firebase Realtime Database
               await db.ref('drone_scores_2026').push({
                 playerName: playerName.trim(),
-                timestamp: firebase.database.ServerValue.TIMESTAMP, // 使用 RTDB 的時間戳記
+                timestamp: firebase.database.ServerValue.TIMESTAMP,
                 scoreData: form,
                 results: calculatedResult
               });
-              showNotification('成績已儲存並即時同步！');
-              setSearchName(playerName.trim());
-              handleResetForm();
-              setActiveTab('history'); 
+              
+              // 2. 觸發綠色按鈕狀態
+              setIsSaved(true);
+              
+              // 3. 1.5 秒後硬刷新整個網頁 (徹底重置所有表單、計時器)
+              setTimeout(() => {
+                  window.location.reload();
+              }, 1500);
+
             } catch (error) {
               console.error("Error saving: ", error);
               showNotification('儲存失敗，請檢查網路連線', 'error');
             }
           };
 
-          // ⚠️ 關鍵修正：從 Realtime Database 刪除紀錄
           const deleteRecord = async (recordId) => {
             try {
               await db.ref('drone_scores_2026').child(recordId).remove();
@@ -544,8 +550,20 @@
                           <div className="text-xs font-bold tracking-widest text-amber-400 uppercase mb-5 flex items-center gap-2"><AlertCircle className="w-4 h-4" /> 無人機專家（QZ-B130）點評</div>
                           <ul className="space-y-4">{calculatedResult.improvements.map((imp, idx) => <li key={idx} className="text-sm text-slate-300 leading-relaxed flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-amber-400/50 mt-2 flex-shrink-0" />{imp}</li>)}</ul>
                         </div>
+                        
+                        {/* ⚠️ 新增：按鈕變換與硬刷新 */}
                         <div className="flex flex-col sm:flex-row gap-4">
-                          <button onClick={handleSave} className="flex-1 bg-white text-slate-900 hover:bg-slate-100 hover:scale-[0.98] active:scale-95 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg"><Check className="w-5 h-5" />確認並儲存成績</button>
+                          <button 
+                            onClick={handleSave} 
+                            disabled={isSaved}
+                            className={`flex-1 hover:scale-[0.98] active:scale-95 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg ${
+                              isSaved ? 'bg-emerald-500 text-white shadow-emerald-500/30' : 'bg-white text-slate-900 hover:bg-slate-100'
+                            }`}
+                          >
+                            <Check className="w-5 h-5" />
+                            {isSaved ? '成績已儲存！準備刷新...' : '確認並儲存成績'}
+                          </button>
+                          
                           <button onClick={handleResetForm} className="sm:w-auto w-full bg-slate-800/50 text-slate-300 hover:bg-slate-700 hover:text-white hover:scale-[0.98] active:scale-95 px-8 py-4 rounded-2xl text-sm font-bold transition-all border border-slate-700">重置表單</button>
                         </div>
                       </div>
